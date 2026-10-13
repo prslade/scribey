@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemonReady = false
     private var hasPastedBefore = false
     private var soundsMuted = UserDefaults.standard.bool(forKey: "soundsMuted")
+    private let ducker = MusicDucker()
+    private var duckingEnabled = UserDefaults.standard.object(forKey: "duckMusic") as? Bool ?? true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         requestAccessibilityPermissionIfNeeded()
@@ -33,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ducker.restoreImmediately()
         hotkeys.stop()
         client.disconnect()
         daemon.stop()
@@ -69,6 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         muteItem.target = self
         muteItem.state = soundsMuted ? .on : .off
         menu.addItem(muteItem)
+        let duckItem = NSMenuItem(
+            title: "Lower Music While Dictating",
+            action: #selector(toggleDucking(_:)),
+            keyEquivalent: ""
+        )
+        duckItem.target = self
+        duckItem.state = duckingEnabled ? .on : .off
+        menu.addItem(duckItem)
         let wordsItem = NSMenuItem(title: "Custom Words", action: nil, keyEquivalent: "")
         wordsItem.submenu = customWords.menu
         menu.addItem(wordsItem)
@@ -95,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Esc pressed mid-recording, or "Stop Recording" chosen from the menu bar.
     private func handleCancel() {
         print("Scribey: recording cancelled by user")
+        ducker.restore()
         AudioRecorder.discardCurrentRecording()
         currentRecordingPath = nil
         recordingState.phase = .idle
@@ -105,6 +117,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         soundsMuted.toggle()
         UserDefaults.standard.set(soundsMuted, forKey: "soundsMuted")
         sender.state = soundsMuted ? .on : .off
+    }
+
+    @objc private func toggleDucking(_ sender: NSMenuItem) {
+        duckingEnabled.toggle()
+        UserDefaults.standard.set(duckingEnabled, forKey: "duckMusic")
+        sender.state = duckingEnabled ? .on : .off
+        if !duckingEnabled { ducker.restore() }
     }
 
     private func playSound(_ name: String) {
@@ -142,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingState.phase = .recording
         overlay?.show()
         playSound("Purr")
+        if duckingEnabled { ducker.duck() }
     }
 
     private func handleLockEngaged() {
@@ -154,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("Scribey: recordStop called but nothing was recording, ignoring")
             return
         }
+        ducker.restore()
         // Nothing was recorded; just take down the "Starting up…" pill.
         guard recordingState.phase != .notReady else {
             recordingState.phase = .idle
